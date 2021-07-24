@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-module-boundary-types */
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable require-jsdoc */
@@ -29,7 +30,7 @@ const getChats = (snapshot: any) => {
     return null;
   }
 };
-const getFirstAvailChat = (chats: any) => {
+export const getFirstAvailChat = (chats: any): any => {
   if (chats) {
     for (const chat of chats) {
       if (!chat.details.active) return chat;
@@ -38,7 +39,7 @@ const getFirstAvailChat = (chats: any) => {
   }
   return null;
 };
-const getFirstAvailChatModified = (chats: any) => {
+export const getFirstAvailChatModified = (chats: any) => {
   if (chats) {
     const chatList = [];
     const chatVals = Object.values(chats);
@@ -61,11 +62,7 @@ const freshMatchCheck = (u1: any, u2: any) => {
   const activeChats = Object.values(u1.chats || {}).find((chat: any) =>
     chat.activematchUUID === u2.profile.uid);
   const friends = Object.values(u1.friends || {}).find((friend: any) =>
-    friend.friendUid === u2.profile.uid);
-  console.log("chats");
-  console.log(activeChats);
-  console.log("friends");
-  console.log(friends);
+    friend.uid === u2.profile.uid);
   return !activeChats && !friends;
 };
 
@@ -99,78 +96,6 @@ export const onQuickMatchQueueChanged = functions.database
       }
 
       //  db.ref("quickMatchQueue").transaction(async (queue) => {
-
-      async function runQuickMatches(queue: any) {
-        const promises = [];
-        if (queue) {
-          const userPromises = Object.values(queue).map((val: any) =>
-            userRef(val.uid).once("value"));
-          // const tags = Object.values(queue).map((val: any) =>
-          //   Object.keys(val.tags));
-          const userSnapshots = await Promise.all(userPromises);
-          const users = userSnapshots.map((us) => us.val() || {});
-          const commonTags = users.map((user1) =>
-            users.map((user2) => {
-              return {
-                user: user2,
-                commonTagsCount: (Object.keys((user2 || {}).tags || {}))
-                    .filter((tag: string) =>
-                      (Object.keys((user1 || {}).tags || {}))
-                          .includes(tag)).length,
-              };
-            }).filter((obj) => {
-              const objUid = obj.user.profile ? obj.user.profile.uid : "DUMMY";
-              const user1Uid = user1.profile ? user1.profile.uid : "DUMMY";
-              return objUid !== user1Uid && objUid !== "DUMMY";
-            }).sort((obj1, obj2) =>
-              obj1.commonTagsCount - obj2.commonTagsCount));
-          const usersMatched = users.map(() => false);
-          const getUidIndex = (uid:string) =>
-            users.findIndex((u:any) =>
-              (u.profile ? u.profile.uid : "DUMMY") === uid);
-          for (let i = 0; i < users.length; i++) {
-            if (!usersMatched[i]) {
-              const tagObj1 = commonTags[i];
-              for (let j = 0; j < tagObj1.length; j++) {
-                const u2Index = getUidIndex(tagObj1[j].user.profile.uid);
-                if (!usersMatched[u2Index]) {
-                  const u1 = users[i];
-                  const u2 = users[u2Index];
-                  const u1Avail = getFirstAvailChatModified(u1.chats);
-                  const u2Avail = getFirstAvailChatModified(u2.chats);
-                  console.log(u1Avail);
-                  console.log(u2Avail);
-                  if (u1Avail && u2Avail && freshMatchCheck(u1, u2)) {
-                    promises.push(userChatRef(u1.profile.uid, u1Avail.chatId)
-                        .update({
-                          active: true,
-                          activematchUUID: u2.profile.uid,
-                          matchBOT: u2Avail.chatId,
-                        }));
-                    promises.push(userChatRef(u2.profile.uid, u2Avail.chatId)
-                        .update({
-                          active: true,
-                          activematchUUID: u1.profile.uid,
-                          matchBOT: u1Avail.chatId,
-                        }));
-                    usersMatched[i] = true;
-                    usersMatched[u2Index] = true;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-          console.log(usersMatched);
-          for (let i = users.length-1; i >= 0; i--) {
-            if (usersMatched[i] && users[i].profile) {
-              delete queue[users[i].profile.uid];
-            }
-          }
-          promises.push(db.ref("/quickMatchQueue").set(queue));
-        }
-        return Promise.all(promises);
-      }
       return runQuickMatches(after);
     });
 
@@ -231,6 +156,92 @@ async function runMatches(queue: any) {
   }
   promises.push(db.ref("/matchQueue").set(queue));
   return Promise.all(promises);
+}
+
+export async function runQuickMatches(
+    queue: any,
+    testMode = false,
+    usersTest: any = {}) {
+  const promises = [];
+  if (queue) {
+    let userPromises;
+    let userSnapshots: any[] = [];
+    let users: any;
+    if (!testMode) {
+      userPromises = Object.values(queue).map((val: any) =>
+        userRef(val.uid).once("value"));
+      userSnapshots = await Promise.all(userPromises);
+      users = userSnapshots.map((us) => us.val() || {});
+    } else {
+      users = Object.values(queue).map((val:any) =>
+        usersTest.users[val.uid]);
+      console.log(users);
+    }
+    const commonTags = users.map((user1: any) =>
+      users.map((user2: any) => {
+        return {
+          user: user2,
+          commonTagsCount: (Object.keys((user2 || {}).tags || {}))
+              .filter((tag: string) =>
+                (Object.keys((user1 || {}).tags || {}))
+                    .includes(tag)).length,
+        };
+      }).filter((obj: any) => {
+        const objUid = obj.user.profile ? obj.user.profile.uid : "DUMMY";
+        const user1Uid = user1.profile ? user1.profile.uid : "DUMMY";
+        return objUid !== user1Uid && objUid !== "DUMMY";
+      }).sort((obj1: any, obj2: any) =>
+        obj2.commonTagsCount - obj1.commonTagsCount));
+    const usersMatched = users.map(() => false);
+    const getUidIndex = (uid:string) =>
+      users.findIndex((u:any) =>
+        (u.profile ? u.profile.uid : "DUMMY") === uid);
+    for (let i = 0; i < users.length; i++) {
+      if (!usersMatched[i]) {
+        const tagObj1 = commonTags[i];
+        for (let j = 0; j < tagObj1.length; j++) {
+          const u2Index = getUidIndex(tagObj1[j].user.profile.uid);
+          if (!usersMatched[u2Index]) {
+            const u1 = users[i];
+            const u2 = users[u2Index];
+            const u1Avail = getFirstAvailChatModified(u1.chats);
+            const u2Avail = getFirstAvailChatModified(u2.chats);
+            console.log(u1Avail);
+            console.log(u2Avail);
+            if (u1Avail && u2Avail && freshMatchCheck(u1, u2)) {
+              if (!testMode) {
+                promises.push(userChatRef(u1.profile.uid, u1Avail.chatId)
+                    .update({
+                      active: true,
+                      activematchUUID: u2.profile.uid,
+                      matchBOT: u2Avail.chatId,
+                    }));
+                promises.push(userChatRef(u2.profile.uid, u2Avail.chatId)
+                    .update({
+                      active: true,
+                      activematchUUID: u1.profile.uid,
+                      matchBOT: u1Avail.chatId,
+                    }));
+              }
+              usersMatched[i] = true;
+              usersMatched[u2Index] = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+    console.log(usersMatched);
+    for (let i = users.length-1; i >= 0; i--) {
+      if (usersMatched[i] && users[i].profile) {
+        delete queue[users[i].profile.uid];
+      }
+    }
+    if (!testMode) {
+      promises.push(db.ref("/quickMatchQueue").set(queue));
+    }
+  }
+  return testMode ? queue : Promise.all(promises);
 }
 
 function changed(obj1: any, obj2: any) {
