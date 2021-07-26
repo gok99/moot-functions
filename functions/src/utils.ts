@@ -2,6 +2,14 @@
 /* eslint-disable require-jsdoc */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/**
+ * object diffs
+ *
+ * @param obj1 object 1
+ * @param obj2 object 2
+ * @returns the diff
+ */
+
 export function diff(
     obj1: any,
     obj2: any

@@ -11,9 +11,33 @@ import {config} from "./secrets";
 // https://firebase.google.com/docs/functions/typescript
 
 // Utils
+/**
+ * get user db ref by uid
+ *
+ * @param uid user uid
+ * @returns db reference
+ */
+
 const userRef = (uid: string) => db.ref(`/users/${uid}`);
+
+/**
+ * get user chat db ref by uid and chatId
+ *
+ * @param uid user uid
+ * @param chatId user chatId
+ * @returns db reference
+ */
+
 const userChatRef = (uid: string, chatId: number) =>
   db.ref(`/users/${uid}/chats/chat${chatId}`);
+
+/**
+ * restructure chat data from firebase user chats
+ *
+ * @param snapshot firebase snapshot
+ * @returns restructured chat data
+ */
+
 const getChats = (snapshot: any) => {
   if (snapshot.exists()) {
     const val = snapshot.val();
@@ -30,6 +54,15 @@ const getChats = (snapshot: any) => {
     return null;
   }
 };
+
+/**
+ * gets first available userchat in a chat list
+ * returned from getChats
+ *
+ * @param chats chat list from getChats
+ * @returns first available chat
+ */
+
 export const getFirstAvailChat = (chats: any): any => {
   if (chats) {
     for (const chat of chats) {
@@ -39,6 +72,15 @@ export const getFirstAvailChat = (chats: any): any => {
   }
   return null;
 };
+
+
+/**
+ * combines getChats and getFirstAvailChat
+ *
+ * @param chats user chats
+ * @returns first available chat
+ */
+
 export const getFirstAvailChatModified = (chats: any) => {
   if (chats) {
     const chatList = [];
@@ -57,6 +99,16 @@ export const getFirstAvailChatModified = (chats: any) => {
   }
   return null;
 };
+
+/**
+ * check that user 1 and user 2 are not friends
+ * and don't have active chats
+ *
+ * @param u1 user 1
+ * @param u2 user 2
+ * @returns true iff fresh match
+ */
+
 const freshMatchCheck = (u1: any, u2: any) => {
   if (!u1.chats || !u2.chats) return false;
   const activeChats = Object.values(u1.chats || {}).find((chat: any) =>
@@ -66,8 +118,14 @@ const freshMatchCheck = (u1: any, u2: any) => {
   return !activeChats && !friends;
 };
 
+// ==========================================================================
+
 admin.initializeApp(config);
 const db = admin.database();
+
+// ==========================================================================
+
+
 export const onMatchQueueChanged = functions.database
     .ref("/matchQueue")
     .onUpdate((snapshot, context) => {
@@ -82,6 +140,7 @@ export const onMatchQueueChanged = functions.database
       // db.ref("matchQueue").transaction(runMatches);
       return runMatches(snapshot.after.val());
     });
+
 
 export const onQuickMatchQueueChanged = functions.database
     .ref("/quickMatchQueue")
@@ -99,8 +158,19 @@ export const onQuickMatchQueueChanged = functions.database
       return runQuickMatches(after);
     });
 
+/**
+ * matchQueue matcher implementation
+ * 
+ * @param queue matchQueue
+ * @param testMode true if being tested
+ * @param userTest users data for testing
+ * @returns promises to await
+ */
 
-async function runMatches(queue: any) {
+export async function runMatches(
+    queue: any,
+    testMode = false,
+    userTest:any = {}) {
   const matched: { liker: string, poster: string }[] = [];
   // eslint-disable-next-line max-len
   const matchedInQueue = async (likerP: any, posterP: any) => {
@@ -119,8 +189,23 @@ async function runMatches(queue: any) {
   for (const key of Object.keys(queue)) {
     const match = queue[key];
     if (match.posterAvail && match.likerAvail) {
-      const poster = userRef(match.posterUid).once("value");
-      const liker = userRef(match.likerUid).once("value");
+      let poster: Promise<any>;
+      let liker: Promise<any>;
+      if (testMode) {
+        poster = new Promise((resolve, reject) =>
+          resolve({
+            exists: () => true,
+            val: () => userTest.users[match.posterUid],
+          }));
+        liker = new Promise((resolve, reject) =>
+          resolve({
+            exists: () => true,
+            val: () => userTest.users[match.likerUid],
+          }));
+      } else {
+        poster = userRef(match.posterUid).once("value");
+        liker = userRef(match.likerUid).once("value");
+      }
       const likerChat = await liker.then(getChats).then(getFirstAvailChat);
       const posterChat = await poster.then(getChats).then(getFirstAvailChat);
       if (!likerChat) {
@@ -132,16 +217,18 @@ async function runMatches(queue: any) {
       if (await matchedInQueue(liker, poster)) {
         delete queue[key];
       } else if (likerChat && posterChat) {
-        promises.push(userChatRef(match.likerUid, likerChat.chatId).update({
-          active: true,
-          activematchUUID: match.posterUid,
-          matchBOT: posterChat.chatId,
-        }));
-        promises.push(userChatRef(match.posterUid, posterChat.chatId).update({
-          active: true,
-          activematchUUID: match.likerUid,
-          matchBOT: likerChat.chatId,
-        }));
+        if (!testMode) {
+          promises.push(userChatRef(match.likerUid, likerChat.chatId).update({
+            active: true,
+            activematchUUID: match.posterUid,
+            matchBOT: posterChat.chatId,
+          }));
+          promises.push(userChatRef(match.posterUid, posterChat.chatId).update({
+            active: true,
+            activematchUUID: match.likerUid,
+            matchBOT: likerChat.chatId,
+          }));
+        }
         matched.push({
           liker: (await liker).val().profile.uid,
           poster: (await poster).val().profile.uid,
@@ -154,9 +241,20 @@ async function runMatches(queue: any) {
       }
     }
   }
-  promises.push(db.ref("/matchQueue").set(queue));
-  return Promise.all(promises);
+  if (!testMode) {
+    promises.push(db.ref("/matchQueue").set(queue));
+  }
+  return testMode ? queue : Promise.all(promises);
 }
+
+/**
+ * quick match matcher implementation
+ *
+ * @param queue quickMatchQueue
+ * @param testMode true if being tested
+ * @param usersTest users for testing
+ * @returns promises to await
+ */
 
 export async function runQuickMatches(
     queue: any,
@@ -243,6 +341,14 @@ export async function runQuickMatches(
   }
   return testMode ? queue : Promise.all(promises);
 }
+
+/**
+ * compares that 2 objects have no diffs between them
+ *
+ * @param obj1 object 1
+ * @param obj2 object 2
+ * @returns true iff objects are changed
+ */
 
 function changed(obj1: any, obj2: any) {
   const d = diff(obj1, obj2);
